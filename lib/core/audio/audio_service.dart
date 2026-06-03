@@ -1,21 +1,22 @@
 import 'dart:js_interop';
+import 'package:flutter/foundation.dart';
 
-/// Plays short synthesised tones using the Web Audio API (dart:js_interop).
-/// Silently no-ops if AudioContext is unavailable.
 class AudioService {
+  static final AudioService _instance = AudioService._internal();
+  factory AudioService() => _instance;
+  AudioService._internal();
+
   _AudioContext? _ctx;
-  _GainNode?     _master;
+  _GainNode? _master;
+
+  void init() {
+    try {
+      _ctx = _AudioContext();
+    } catch (_) {}
+  }
 
   void _ensureCtx() {
-    if (_ctx != null) return;
-    try {
-      _ctx   = _AudioContext();
-      _master = _ctx!.createGain();
-      _master!.gain.value = 0.8.toJS;
-      _master!.connect(_ctx!.destination);
-    } catch (_) {
-      _ctx = null;
-    }
+    if (_ctx == null) init();
   }
 
   void _tone({
@@ -27,12 +28,12 @@ class AudioService {
     try {
       _ensureCtx();
       if (_ctx == null) return;
-      final ctx  = _ctx!;
-      final now  = ctx.currentTime;
-      final end  = now + durationSec;
+      final ctx = _ctx!;
+      final now = ctx.currentTime;
+      final end = now + durationSec;
 
-      final osc  = ctx.createOscillator();
-      final env  = ctx.createGain();
+      final osc = ctx.createOscillator();
+      final env = ctx.createGain();
       osc.connect(env);
       env.connect(_master!);
 
@@ -58,7 +59,7 @@ class AudioService {
   }
 }
 
-// ── dart:js_interop bindings ──────────────────────────────────────────────────
+// -- dart:js_interop bindings --
 
 @JS('AudioContext')
 @staticInterop
@@ -74,7 +75,7 @@ extension _AudioContextExt on _AudioContext {
 
 @JS()
 @staticInterop
-class _AudioDestinationNode {}
+class _AudioDestinationNode extends _AudioNode {}
 
 @JS()
 @staticInterop
