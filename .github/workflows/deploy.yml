@@ -10,7 +10,6 @@ permissions:
   pages: write
   id-token: write
 
-# Only one deployment runs at a time; a new push cancels any in-progress run.
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -18,6 +17,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: focus_ring
 
     steps:
       - name: Checkout
@@ -34,21 +36,19 @@ jobs:
         run: flutter pub get
 
       - name: Build web
-        run: flutter build web --release --base-href "/focus_ring/"
+        run: flutter build web --release --base-href "/focus-ring/"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: build/web
+          path: focus_ring/build/web
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
-
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
