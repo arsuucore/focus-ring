@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -30,22 +31,53 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
+
+  // Result label fade
   late final AnimationController _resultLabelCtrl;
   late final Animation<double>   _resultLabelOpacity;
   TapResult? _displayedResult;
 
+  // Screen shake on miss
+  late final AnimationController _shakeCtrl;
+  late final Animation<Offset>   _shakeAnim;
+
+  // Red flash on miss
+  late final AnimationController _flashCtrl;
+  late final Animation<double>   _flashOpacity;
+
+  // Score pop on hit
+  late final AnimationController _scorePopCtrl;
+  late final Animation<double>   _scorePop;
+
   @override
   void initState() {
     super.initState();
-    _resultLabelCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    );
+
+    _resultLabelCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
     _resultLabelOpacity = CurvedAnimation(
       parent: _resultLabelCtrl,
       curve: const Interval(0.4, 1.0, curve: Curves.easeIn),
     ).drive(Tween<double>(begin: 1.0, end: 0.0));
+
+    _shakeCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
+    _shakeAnim = _shakeCtrl.drive(
+      TweenSequence<Offset>([
+        TweenSequenceItem(tween: Tween(begin: Offset.zero, end: const Offset(0.015, 0)), weight: 1),
+        TweenSequenceItem(tween: Tween(begin: const Offset(0.015, 0), end: const Offset(-0.015, 0.01)), weight: 1),
+        TweenSequenceItem(tween: Tween(begin: const Offset(-0.015, 0.01), end: const Offset(0.01, -0.01)), weight: 1),
+        TweenSequenceItem(tween: Tween(begin: const Offset(0.01, -0.01), end: const Offset(-0.008, 0.005)), weight: 1),
+        TweenSequenceItem(tween: Tween(begin: const Offset(-0.008, 0.005), end: Offset.zero), weight: 1),
+      ]),
+    );
+
+    _flashCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 350));
+    _flashOpacity = CurvedAnimation(parent: _flashCtrl, curve: Curves.easeOut)
+        .drive(Tween<double>(begin: 0.45, end: 0.0));
+
+    _scorePopCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 200));
+    _scorePop = CurvedAnimation(parent: _scorePopCtrl, curve: Curves.easeOutBack)
+        .drive(Tween<double>(begin: 1.0, end: 1.25));
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<GameBloc>().add(GameStarted(mode: widget.mode));
@@ -55,31 +87,37 @@ class _GameScreenState extends State<GameScreen>
   @override
   void dispose() {
     _resultLabelCtrl.dispose();
+    _shakeCtrl.dispose();
+    _flashCtrl.dispose();
+    _scorePopCtrl.dispose();
     super.dispose();
   }
 
-  void _showResultLabel(TapResult result) {
-    setState(() => _displayedResult = result);
-    _resultLabelCtrl.forward(from: 0);
+  void _onMiss() {
+    _shakeCtrl.forward(from: 0);
+    _flashCtrl.forward(from: 0);
   }
 
   void _handleTap(TapResult result) {
     context.read<GameBloc>().add(GameTapRegistered(result: result));
-    _showResultLabel(result);
+    setState(() => _displayedResult = result);
+    _resultLabelCtrl.forward(from: 0);
+    if (result == TapResult.miss) {
+      _onMiss();
+    } else {
+      _scorePopCtrl.forward(from: 0).then((_) => _scorePopCtrl.reverse());
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return BlocListener<GameBloc, GameState>(
       listenWhen: (prev, curr) =>
-          prev.phase != GamePhase.finished &&
-          curr.phase == GamePhase.finished,
+          prev.phase != GamePhase.finished && curr.phase == GamePhase.finished,
       listener: (context, state) {
         if (state.session != null) {
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => ResultScreen(session: state.session!),
-            ),
+            MaterialPageRoute(builder: (_) => ResultScreen(session: state.session!)),
           );
         }
       },
@@ -91,57 +129,77 @@ class _GameScreenState extends State<GameScreen>
               final isPlaying   = state.phase == GamePhase.playing;
               final isCountdown = state.phase == GamePhase.countdown;
 
-              return Stack(
-                children: [
-                  Column(
-                    children: [
-                      const SizedBox(height: 16),
+              return AnimatedBuilder(
+                animation: _shakeAnim,
+                builder: (context, child) => FractionalTranslation(
+                  translation: _shakeAnim.value,
+                  child: child,
+                ),
+                child: Stack(
+                  children: [
+                    Column(
+                      children: [
+                        const SizedBox(height: 16),
 
-                      ModeHeader(
-                        modeLabel:        GameScreen.modeLabel(widget.mode),
-                        remainingSeconds: state.remainingSeconds,
-                      ),
-
-                      const SizedBox(height: 32),
-
-                      _ScoreDisplay(score: state.score),
-
-                      const Spacer(),
-
-                      Center(
-                        child: FocusRingWidget(
-                          config:   const RingConfig(),
-                          enabled:  isPlaying,
-                          onResult: isPlaying ? _handleTap : null,
+                        ModeHeader(
+                          modeLabel:        GameScreen.modeLabel(widget.mode),
+                          remainingSeconds: state.remainingSeconds,
                         ),
-                      ),
 
-                      const Spacer(),
+                        const SizedBox(height: 32),
 
-                      SizedBox(
-                        height: 64,
-                        child: Center(
-                          child: ComboDisplay(combo: state.combo),
+                        // Score with pop animation
+                        ScaleTransition(
+                          scale: _scorePop,
+                          child: _ScoreDisplay(score: state.score),
                         ),
-                      ),
 
-                      SizedBox(
-                        height: 32,
-                        child: Center(
-                          child: FadeTransition(
-                            opacity: _resultLabelOpacity,
-                            child: _ResultLabel(result: _displayedResult),
+                        const Spacer(),
+
+                        Center(
+                          child: FocusRingWidget(
+                            config:   const RingConfig(),
+                            enabled:  isPlaying,
+                            combo:    state.combo,
+                            onResult: isPlaying ? _handleTap : null,
                           ),
                         ),
+
+                        const Spacer(),
+
+                        SizedBox(
+                          height: 64,
+                          child: Center(child: ComboDisplay(combo: state.combo)),
+                        ),
+
+                        SizedBox(
+                          height: 32,
+                          child: Center(
+                            child: FadeTransition(
+                              opacity: _resultLabelOpacity,
+                              child: _ResultLabel(result: _displayedResult),
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 24),
+                      ],
+                    ),
+
+                    // Red flash overlay on miss
+                    AnimatedBuilder(
+                      animation: _flashOpacity,
+                      builder: (_, __) => IgnorePointer(
+                        child: Container(
+                          color: const Color(0xFFFF1111).withValues(alpha: _flashOpacity.value),
+                        ),
                       ),
+                    ),
 
-                      const SizedBox(height: 24),
-                    ],
-                  ),
-
-                  if (isCountdown)
-                    CountdownOverlay(count: state.countdownCount),
-                ],
+                    if (isCountdown)
+                      CountdownOverlay(count: state.countdownCount),
+                  ],
+                ),
               );
             },
           ),
@@ -160,27 +218,17 @@ class _ScoreDisplay extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          '$score',
-          style: const TextStyle(
-            fontFamily: 'monospace',
-            fontSize:   52,
-            fontWeight: FontWeight.w700,
-            color:      AppColors.textPrimary,
-            height:     1,
-          ),
-        ),
+        Text('$score',
+            style: const TextStyle(
+              fontFamily: 'monospace', fontSize: 52, fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary, height: 1,
+            )),
         const SizedBox(height: 4),
-        const Text(
-          'SCORE',
-          style: TextStyle(
-            fontFamily:    'monospace',
-            fontSize:      10,
-            fontWeight:    FontWeight.w600,
-            letterSpacing: 4,
-            color:         AppColors.textDim,
-          ),
-        ),
+        const Text('SCORE',
+            style: TextStyle(
+              fontFamily: 'monospace', fontSize: 10, fontWeight: FontWeight.w600,
+              letterSpacing: 4, color: AppColors.textDim,
+            )),
       ],
     );
   }
@@ -193,22 +241,15 @@ class _ResultLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (result == null) return const SizedBox.shrink();
-
     final (label, color) = switch (result!) {
       TapResult.perfect => ('PERFECT', AppColors.accent),
       TapResult.good    => ('GOOD',    AppColors.textPrimary),
-      TapResult.miss    => ('MISS',    AppColors.textMid),
+      TapResult.miss    => ('MISS',    const Color(0xFFFF3333)),
     };
-
-    return Text(
-      label,
-      style: TextStyle(
-        fontFamily:    'monospace',
-        fontSize:      13,
-        fontWeight:    FontWeight.w700,
-        letterSpacing: 4,
-        color:         color,
-      ),
-    );
+    return Text(label,
+        style: TextStyle(
+          fontFamily: 'monospace', fontSize: 13, fontWeight: FontWeight.w700,
+          letterSpacing: 4, color: color,
+        ));
   }
 }
